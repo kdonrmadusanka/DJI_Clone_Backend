@@ -1,0 +1,337 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["relationJoins"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  relationMode = "prisma"
+}
+
+// ============================================
+// ENUMERATIONS
+// ============================================
+
+/// Product lifecycle states
+enum ProductStatus {
+  DRAFT          @map("draft")          // Product is being prepared
+  PUBLISHED      @map("published")      // Product is visible to customers
+  ARCHIVED       @map("archived")       // Product is hidden but kept for records
+  DISCONTINUED   @map("discontinued")   // Product is no longer available
+}
+
+/// Variant availability states
+enum VariantStatus {
+  ACTIVE         @map("active")         // Available for purchase
+  OUT_OF_STOCK   @map("out_of_stock")   // Temporarily unavailable
+  PRE_ORDER      @map("pre_order")      // Available for pre-order
+}
+
+/// Media content types
+enum MediaType {
+  IMAGE          @map("image")          // Standard product image
+  VIDEO          @map("video")          // Product video
+  THUMBNAIL      @map("thumbnail")      // Small preview image
+  COVER          @map("cover")          // Main product cover
+  GALLERY        @map("gallery")        // Gallery image
+  COMPARISON     @map("comparison")     // Comparison/feature image
+}
+
+// ============================================
+// CATEGORY MODEL
+// ============================================
+
+/// Product category with hierarchical structure
+model Category {
+  // Identifiers
+  id              String    @id @default(uuid()) @map("category_id")
+  
+  // Core attributes
+  name            String    @db.VarChar(255)
+  slug            String    @unique @db.VarChar(255)
+  description     String?   @db.Text
+  
+  // Hierarchy
+  parentId        String?   @map("parent_id")
+  order           Int       @default(0)
+  isVisible       Boolean   @default(true) @map("is_visible")
+  
+  // Timestamps
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  
+  // Relations
+  parent          Category?     @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children        Category[]    @relation("CategoryHierarchy")
+  products        Product[]
+  series          ProductSeries[]
+  
+  // Indexes
+  @@index([parentId], name: "idx_category_parent")
+  @@index([order], name: "idx_category_order")
+  @@index([slug], name: "idx_category_slug")
+  @@index([isVisible], name: "idx_category_visibility")
+  
+  @@map("categories")
+}
+
+// ============================================
+// PRODUCT SERIES MODEL
+// ============================================
+
+/// Collection of related products (e.g., iPhone 14 Series)
+model ProductSeries {
+  // Identifiers
+  id          String    @id @default(uuid()) @map("series_id")
+  
+  // Core attributes
+  name        String    @db.VarChar(255)
+  slug        String    @unique @db.VarChar(255)
+  description String?   @db.Text
+  imageUrl    String?   @map("image_url") @db.VarChar(500)
+  order       Int       @default(0)
+  isActive    Boolean   @default(true) @map("is_active")
+  
+  // Timestamps
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  
+  // Relations
+  category    Category    @relation(fields: [categoryId], references: [id])
+  categoryId  String      @map("category_id")
+  products    Product[]
+  
+  // Indexes
+  @@index([categoryId], name: "idx_series_category")
+  @@index([slug], name: "idx_series_slug")
+  @@index([order], name: "idx_series_order")
+  @@index([isActive], name: "idx_series_active")
+  
+  @@map("product_series")
+}
+
+// ============================================
+// PRODUCT MODEL
+// ============================================
+
+/// Core product entity representing a sellable item
+model Product {
+  // Identifiers
+  id                String         @id @default(uuid()) @map("product_id")
+  
+  // Core attributes
+  name              String         @db.VarChar(255)
+  slug              String         @unique @db.VarChar(255)
+  shortDescription  String         @db.Text @map("short_description")
+  fullDescription   String?        @db.Text @map("full_description")
+  
+  // Status and flags
+  status            ProductStatus  @default(DRAFT)
+  isFeatured        Boolean        @default(false) @map("is_featured")
+  isNew             Boolean        @default(false) @map("is_new")
+  
+  // Release and SEO
+  releaseDate       DateTime?      @map("release_date")
+  seoTitle          String?        @db.VarChar(255) @map("seo_title")
+  seoDescription    String?        @db.VarChar(500) @map("seo_description")
+  seoKeywords       String[]       @db.VarChar(100)[] @map("seo_keywords")
+  
+  // Timestamps
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+  
+  // Relations
+  category          Category       @relation(fields: [categoryId], references: [id])
+  categoryId        String         @map("category_id")
+  
+  series            ProductSeries? @relation(fields: [seriesId], references: [id])
+  seriesId          String?        @map("series_id")
+  
+  variants          ProductVariant[]
+  attributes        ProductAttribute[]
+  media             ProductMedia[]
+  
+  // Indexes for performance
+  @@index([categoryId], name: "idx_product_category")
+  @@index([seriesId], name: "idx_product_series")
+  @@index([slug], name: "idx_product_slug")
+  @@index([status], name: "idx_product_status")
+  @@index([isFeatured], name: "idx_product_featured")
+  @@index([createdAt], name: "idx_product_created")
+  @@index([releaseDate], name: "idx_product_release")
+  @@index([status, isFeatured, createdAt], name: "idx_product_display")
+  
+  @@map("products")
+}
+
+// ============================================
+// PRODUCT VARIANT MODEL
+// ============================================
+
+/// Specific variation of a product (e.g., size, color)
+model ProductVariant {
+  // Identifiers
+  id              String        @id @default(uuid()) @map("variant_id")
+  
+  // Core attributes
+  name            String        @db.VarChar(255)
+  sku             String        @unique @db.VarChar(100)
+  price           Decimal       @db.Decimal(10, 2)
+  compareAtPrice  Decimal?      @map("compare_at_price") @db.Decimal(10, 2)
+  stock           Int           @default(0)
+  
+  // Physical properties
+  weight          Decimal?      @db.Decimal(8, 3) // in kilograms
+  dimensions      String?       @db.VarChar(100) // "LxWxH" format
+  
+  // Status and ordering
+  isDefault       Boolean       @default(false) @map("is_default")
+  status          VariantStatus @default(ACTIVE)
+  order           Int           @default(0)
+  
+  // Timestamps
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  
+  // Relations
+  product         Product                 @relation(fields: [productId], references: [id])
+  productId       String                  @map("product_id")
+  
+  regionPricing   ProductRegionPricing[]
+  attributes      ProductAttribute[]
+  
+  // Indexes
+  @@index([productId], name: "idx_variant_product")
+  @@index([sku], name: "idx_variant_sku")
+  @@index([status], name: "idx_variant_status")
+  @@index([order], name: "idx_variant_order")
+  @@index([createdAt], name: "idx_variant_created")
+  @@index([status, stock], name: "idx_variant_availability")
+  @@index([price], name: "idx_variant_price")
+  
+  @@map("product_variants")
+}
+
+// ============================================
+// PRODUCT ATTRIBUTE MODEL
+// ============================================
+
+/// Additional characteristics for products or variants
+model ProductAttribute {
+  // Identifiers
+  id        String   @id @default(uuid()) @map("attribute_id")
+  
+  // Attribute data
+  key       String   @db.VarChar(100)
+  value     String   @db.VarChar(255)
+  group     String?  @db.VarChar(100)
+  order     Int      @default(0)
+  
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  product   Product?        @relation(fields: [productId], references: [id])
+  productId String?         @map("product_id")
+  
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+  variantId String?         @map("variant_id")
+  
+  // Validation
+  @@assert((productId != null && variantId == null) || (productId == null && variantId != null), 
+           "Attribute must belong to either a product or variant, not both")
+  
+  // Indexes
+  @@index([productId], name: "idx_attribute_product")
+  @@index([variantId], name: "idx_attribute_variant")
+  @@index([group], name: "idx_attribute_group")
+  @@index([order], name: "idx_attribute_order")
+  @@index([key, value], name: "idx_attribute_key_value")
+  @@index([productId, key], name: "idx_attribute_product_key")
+  
+  @@map("product_attributes")
+}
+
+// ============================================
+// PRODUCT MEDIA MODEL
+// ============================================
+
+/// Media assets associated with products or variants
+model ProductMedia {
+  // Identifiers
+  id        String     @id @default(uuid()) @map("media_id")
+  
+  // Media data
+  url       String     @db.VarChar(500)
+  type      MediaType  @default(GALLERY)
+  altText   String     @db.VarChar(255) @map("alt_text")
+  caption   String?    @db.VarChar(500)
+  
+  // Ordering and flags
+  order     Int        @default(0)
+  isPrimary Boolean    @default(false) @map("is_primary")
+  
+  // Timestamps
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+  
+  // Relations
+  product   Product?        @relation(fields: [productId], references: [id])
+  productId String?         @map("product_id")
+  
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+  variantId String?         @map("variant_id")
+  
+  // Validation
+  @@assert((productId != null && variantId == null) || (productId == null && variantId != null), 
+           "Media must belong to either a product or variant, not both")
+  
+  // Indexes
+  @@index([productId], name: "idx_media_product")
+  @@index([variantId], name: "idx_media_variant")
+  @@index([type], name: "idx_media_type")
+  @@index([order], name: "idx_media_order")
+  @@index([isPrimary], name: "idx_media_primary")
+  @@index([productId, isPrimary], name: "idx_media_product_primary")
+  @@index([productId, type, order], name: "idx_media_product_display")
+  
+  @@map("product_media")
+}
+
+// ============================================
+// REGION PRICING MODEL
+// ============================================
+
+/// Regional pricing information for variants
+model ProductRegionPricing {
+  // Identifiers
+  id              String   @id @default(uuid()) @map("region_pricing_id")
+  
+  // Region and pricing
+  regionCode      String   @db.VarChar(10) @map("region_code")
+  currency        String   @default("USD") @db.VarChar(3)
+  price           Decimal  @db.Decimal(10, 2)
+  compareAtPrice  Decimal? @map("compare_at_price") @db.Decimal(10, 2)
+  taxIncluded     Boolean  @default(false) @map("tax_included")
+  
+  // Timestamps
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  variant         ProductVariant @relation(fields: [variantId], references: [id])
+  variantId       String         @map("variant_id")
+  
+  // Unique constraint
+  @@unique([variantId, regionCode], name: "uniq_variant_region")
+  
+  // Indexes
+  @@index([variantId], name: "idx_region_pricing_variant")
+  @@index([regionCode], name: "idx_region_pricing_region")
+  @@index([currency], name: "idx_region_pricing_currency")
+  @@index([regionCode, currency], name: "idx_region_pricing_region_currency")
+  
+  @@map("product_region_pricing")
+}
